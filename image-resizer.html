@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Image Resizer</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --surface2: #22222f;
+      --border: #2e2e42;
+      --accent: #7c6ff7;
+      --accent2: #a78bfa;
+      --text: #e8e8f0;
+      --muted: #7a7a9a;
+      --success: #34d399;
+      --error: #f87171;
+      --warning: #fbbf24;
+      --radius: 12px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px;
+    }
+
+    header { text-align: center; margin-bottom: 24px; }
+    header h1 {
+      font-size: 28px; font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; letter-spacing: -0.5px;
+    }
+    header p { color: var(--muted); margin-top: 6px; font-size: 14px; }
+
+    /* Mode Tabs */
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 4px;
+      gap: 4px;
+      margin-bottom: 24px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 9px 28px;
+      border-radius: 7px;
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      background: transparent;
+      color: var(--muted);
+      transition: all 0.15s;
+    }
+    .tab-btn.active { background: var(--accent); color: #fff; }
+    .tab-btn:not(.active):hover { color: var(--text); background: var(--surface2); }
+
+    .container {
+      width: 100%; max-width: 860px;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 20px;
+    }
+    @media (max-width: 640px) { .container { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px;
+    }
+    .card-title {
+      font-size: 13px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.8px;
+      color: var(--muted); margin-bottom: 16px;
+    }
+
+    /* Drop Zone */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 40px 20px;
+      text-align: center; cursor: pointer;
+      transition: all 0.2s; position: relative;
+      grid-column: 1 / -1;
+    }
+    #drop-zone.has-image { padding: 0; overflow: hidden; border-style: solid; border-color: var(--accent); }
+    #drop-zone.drag-over { border-color: var(--accent); background: rgba(124,111,247,0.08); }
+    #drop-zone:hover:not(.has-image) { border-color: var(--accent); background: rgba(124,111,247,0.05); }
+    #drop-zone .drop-icon { font-size: 40px; margin-bottom: 12px; }
+    #drop-zone .drop-text { font-size: 15px; color: var(--text); font-weight: 500; }
+    #drop-zone .drop-sub  { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+    #preview-img {
+      width: 100%; max-height: 300px; object-fit: contain;
+      display: none; border-radius: calc(var(--radius) - 2px); background: #0a0a10;
+    }
+    #drop-zone.has-image #preview-img { display: block; }
+    #drop-zone.has-image .drop-content { display: none; }
+    .preview-overlay {
+      position: absolute; top: 10px; right: 10px;
+      display: none; gap: 8px;
+    }
+    #drop-zone.has-image .preview-overlay { display: flex; }
+    .overlay-btn {
+      background: rgba(0,0,0,0.7); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 6px 12px;
+      font-size: 12px; cursor: pointer; transition: background 0.15s;
+    }
+    .overlay-btn:hover { background: rgba(124,111,247,0.4); }
+
+    /* Info bar */
+    #info-bar {
+      display: none; grid-column: 1 / -1;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 14px 20px; gap: 24px; flex-wrap: wrap;
+    }
+    #info-bar.visible { display: flex; }
+    .info-item { display: flex; flex-direction: column; gap: 2px; }
+    .info-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+    .info-value { font-size: 14px; font-weight: 600; color: var(--text); }
+
+    /* Filename bar */
+    #filename-bar {
+      display: none; grid-column: 1 / -1;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 12px 20px;
+      align-items: center; gap: 12px;
+    }
+    #filename-bar.visible { display: flex; }
+    #filename-bar .fn-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+    #out-filename {
+      flex: 1; background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 8px 12px;
+      font-size: 14px; font-weight: 600; outline: none; transition: border-color 0.15s;
+    }
+    #out-filename:focus { border-color: var(--accent); }
+    .fn-ext { font-size: 13px; color: var(--muted); font-weight: 600; }
+
+    /* Bulk Drop Zone */
+    #bulk-drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 36px 20px;
+      text-align: center; cursor: pointer;
+      transition: all 0.2s;
+      grid-column: 1 / -1;
+    }
+    #bulk-drop-zone.drag-over { border-color: var(--accent); background: rgba(124,111,247,0.08); }
+    #bulk-drop-zone:hover { border-color: var(--accent); background: rgba(124,111,247,0.05); }
+    #bulk-drop-zone .drop-icon { font-size: 36px; margin-bottom: 10px; }
+    #bulk-drop-zone .drop-text { font-size: 15px; color: var(--text); font-weight: 500; }
+    #bulk-drop-zone .drop-sub  { font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+    /* Bulk Queue */
+    #bulk-queue-section {
+      grid-column: 1 / -1;
+      display: none;
+    }
+    #bulk-queue-section.visible { display: block; }
+
+    .queue-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .queue-count {
+      font-size: 13px; color: var(--muted); font-weight: 600;
+    }
+    .queue-clear {
+      font-size: 12px; color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 12px; cursor: pointer; transition: all 0.15s;
+    }
+    .queue-clear:hover { color: var(--error); border-color: var(--error); }
+
+    .queue-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 12px;
+    }
+
+    .queue-item {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+      transition: border-color 0.15s;
+    }
+    .queue-item.done  { border-color: var(--success); }
+    .queue-item.error { border-color: var(--error); }
+    .queue-item.processing { border-color: var(--accent); }
+
+    .queue-item img {
+      width: 100%; height: 100px; object-fit: cover; display: block;
+      background: #0a0a10;
+    }
+    .queue-item-info {
+      padding: 8px 10px;
+    }
+    .queue-item-name {
+      font-size: 11px; color: var(--text); font-weight: 500;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      width: 100%; background: transparent; border: 1px solid transparent;
+      border-radius: 4px; padding: 1px 4px; outline: none;
+      transition: border-color 0.15s;
+    }
+    .queue-item-name:hover { border-color: var(--border); }
+    .queue-item-name:focus { border-color: var(--accent); background: var(--surface); }
+    .queue-item-meta {
+      font-size: 10px; color: var(--muted); margin-top: 2px;
+    }
+    .queue-item-status {
+      position: absolute; top: 6px; right: 6px;
+      background: rgba(0,0,0,0.75);
+      border-radius: 5px; padding: 2px 6px;
+      font-size: 11px; font-weight: 600;
+    }
+    .queue-item-status.pending    { color: var(--muted); }
+    .queue-item-status.processing { color: var(--accent2); }
+    .queue-item-status.done       { color: var(--success); }
+    .queue-item-status.error      { color: var(--error); }
+
+    .queue-item-remove {
+      position: absolute; top: 4px; left: 6px;
+      background: rgba(0,0,0,0.7); border: none; color: var(--muted);
+      width: 20px; height: 20px; border-radius: 50%;
+      cursor: pointer; font-size: 12px; display: flex;
+      align-items: center; justify-content: center;
+      opacity: 0; transition: opacity 0.15s;
+    }
+    .queue-item:hover .queue-item-remove { opacity: 1; }
+    .queue-item-remove:hover { color: var(--error); }
+
+    /* Progress Bar */
+    #bulk-progress {
+      grid-column: 1 / -1;
+      display: none;
+    }
+    #bulk-progress.visible { display: block; }
+    .progress-bar-wrap {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px 20px;
+    }
+    .progress-label {
+      display: flex; justify-content: space-between;
+      font-size: 13px; color: var(--muted); margin-bottom: 10px;
+    }
+    .progress-label span:last-child { color: var(--accent2); font-weight: 600; }
+    .progress-track {
+      height: 6px; background: var(--border); border-radius: 3px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      border-radius: 3px; transition: width 0.3s; width: 0%;
+    }
+
+    /* Settings */
+    .settings-grid { display: grid; gap: 16px; }
+    label {
+      display: flex; flex-direction: column; gap: 6px;
+      font-size: 13px; color: var(--muted); font-weight: 500;
+    }
+    input[type="number"], select {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 8px; padding: 10px 12px;
+      font-size: 14px; outline: none; transition: border-color 0.15s; width: 100%;
+    }
+    input[type="number"]:focus, select:focus { border-color: var(--accent); }
+    select option { background: var(--surface2); }
+    .input-row { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: end; }
+    .lock-btn {
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--muted); border-radius: 8px; width: 38px; height: 38px;
+      cursor: pointer; font-size: 16px; display: flex; align-items: center;
+      justify-content: center; transition: all 0.15s; flex-shrink: 0;
+    }
+    .lock-btn.locked { border-color: var(--accent); color: var(--accent); background: rgba(124,111,247,0.1); }
+    .range-row { display: flex; align-items: center; gap: 12px; }
+    input[type="range"] {
+      flex: 1; -webkit-appearance: none; height: 4px;
+      border-radius: 2px; background: var(--border); outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px;
+      border-radius: 50%; background: var(--accent); cursor: pointer;
+    }
+    .range-val { font-size: 13px; font-weight: 600; color: var(--accent2); min-width: 36px; text-align: right; }
+
+    /* Actions */
+    .actions { grid-column: 1 / -1; display: flex; gap: 12px; }
+    .btn {
+      flex: 1; padding: 14px 24px; border-radius: var(--radius); border: none;
+      font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-primary { background: linear-gradient(135deg, var(--accent), #6c63f5); color: #fff; }
+    .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(124,111,247,0.4); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .btn-secondary {
+      background: var(--surface2); color: var(--muted);
+      border: 1px solid var(--border); flex: none; padding: 14px 20px;
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--text); }
+
+    /* Status */
+    #status, #bulk-status {
+      grid-column: 1 / -1; border-radius: var(--radius); padding: 14px 18px;
+      font-size: 14px; font-weight: 500; display: none; align-items: center; gap: 10px;
+    }
+    #status.success, #bulk-status.success { display: flex; background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.3); color: var(--success); }
+    #status.error,   #bulk-status.error   { display: flex; background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.3); color: var(--error); }
+
+    /* Result preview */
+    #result-section { grid-column: 1 / -1; display: none; }
+    #result-section.visible { display: block; }
+    .result-compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+    @media (max-width: 480px) { .result-compare { grid-template-columns: 1fr; } }
+    .result-img-wrap {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .result-img-wrap img { width: 100%; max-height: 200px; object-fit: contain; background: #0a0a10; }
+    .result-img-label {
+      padding: 10px 14px; font-size: 12px; color: var(--muted);
+      border-top: 1px solid var(--border); display: flex; justify-content: space-between;
+    }
+    .result-img-label span { color: var(--text); font-weight: 600; }
+
+    /* Mode panel visibility */
+    .single-only, .bulk-only { display: contents; }
+    .hidden-panel { display: none !important; }
+
+    #file-input, #bulk-file-input { display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🖼 Image Resizer</h1>
+  <p>Resize single images or batch-process multiple files at once</p>
+</header>
+
+<!-- Mode Tabs -->
+<div class="tabs">
+  <button class="tab-btn active" id="tab-single" onclick="setMode('single')">Single Image</button>
+  <button class="tab-btn"        id="tab-bulk"   onclick="setMode('bulk')">Bulk Resize</button>
+</div>
+
+<div class="container">
+
+  <!-- ═══════════════ SINGLE MODE ═══════════════ -->
+
+  <!-- Drop Zone -->
+  <div id="drop-zone" class="single-panel">
+    <div class="drop-content">
+      <div class="drop-icon">📂</div>
+      <div class="drop-text">Drop your image here</div>
+      <div class="drop-sub">or click to browse &mdash; JPG, PNG, WebP, GIF, BMP</div>
+    </div>
+    <img id="preview-img" alt="Preview" />
+    <div class="preview-overlay">
+      <button class="overlay-btn" onclick="document.getElementById('file-input').click()">Change</button>
+      <button class="overlay-btn" onclick="clearImage()">Clear</button>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept="image/*" />
+
+  <!-- Image Info Bar -->
+  <div id="info-bar" class="single-panel">
+    <div class="info-item"><span class="info-label">File</span><span class="info-value" id="info-name">—</span></div>
+    <div class="info-item"><span class="info-label">Dimensions</span><span class="info-value" id="info-dims">—</span></div>
+    <div class="info-item"><span class="info-label">Size</span><span class="info-value" id="info-size">—</span></div>
+    <div class="info-item"><span class="info-label">Type</span><span class="info-value" id="info-type">—</span></div>
+  </div>
+
+  <!-- Output Filename -->
+  <div id="filename-bar" class="single-panel">
+    <span class="fn-label">Output name</span>
+    <input type="text" id="out-filename" placeholder="filename" />
+    <span class="fn-ext" id="fn-ext">.jpg</span>
+  </div>
+
+  <!-- ═══════════════ BULK MODE ═══════════════ -->
+
+  <!-- Bulk Drop Zone -->
+  <div id="bulk-drop-zone" class="bulk-panel" style="display:none">
+    <div class="drop-icon">📁</div>
+    <div class="drop-text">Drop multiple images here</div>
+    <div class="drop-sub">or click to browse &mdash; select as many files as you want</div>
+  </div>
+  <input type="file" id="bulk-file-input" accept="image/*" multiple />
+
+  <!-- Bulk Queue -->
+  <div id="bulk-queue-section" class="bulk-panel" style="display:none">
+    <div class="queue-header">
+      <span class="queue-count" id="queue-count">0 images</span>
+      <button class="queue-clear" onclick="clearBulkQueue()">Clear all</button>
+    </div>
+    <div class="queue-grid" id="queue-grid"></div>
+  </div>
+
+  <!-- Bulk Progress -->
+  <div id="bulk-progress" class="bulk-panel" style="display:none">
+    <div class="progress-bar-wrap">
+      <div class="progress-label">
+        <span id="progress-text">Processing…</span>
+        <span id="progress-pct">0%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" id="progress-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ SHARED SETTINGS ═══════════════ -->
+
+  <!-- Resize Settings -->
+  <div class="card">
+    <div class="card-title">Dimensions</div>
+    <div class="settings-grid">
+      <div class="input-row">
+        <label>Width (px)<input type="number" id="out-width" placeholder="auto" min="1" max="8000" /></label>
+        <button class="lock-btn locked" id="lock-btn" title="Lock aspect ratio" onclick="toggleLock()">🔒</button>
+        <label>Height (px)<input type="number" id="out-height" placeholder="auto" min="1" max="8000" /></label>
+      </div>
+      <label>
+        Scale (%)
+        <div class="range-row">
+          <input type="range" id="scale-range" min="1" max="200" value="100" />
+          <span class="range-val" id="scale-val">100%</span>
+        </div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Format & Quality -->
+  <div class="card">
+    <div class="card-title">Format &amp; Quality</div>
+    <div class="settings-grid">
+      <label>
+        Output Format
+        <select id="out-format">
+          <option value="same">Same as original</option>
+          <option value="image/jpeg">JPEG</option>
+          <option value="image/png">PNG</option>
+          <option value="image/webp">WebP</option>
+        </select>
+      </label>
+      <label id="quality-label">
+        Quality
+        <div class="range-row">
+          <input type="range" id="quality-range" min="1" max="100" value="90" />
+          <span class="range-val" id="quality-val">90%</span>
+        </div>
+      </label>
+      <label>
+        Fit Mode
+        <select id="fit-mode">
+          <option value="inside">Inside (keep ratio, no crop)</option>
+          <option value="cover">Cover (crop to fill)</option>
+          <option value="fill">Fill (stretch to fit)</option>
+          <option value="contain">Contain (letterbox)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <!-- Single Status -->
+  <div id="status" class="single-panel"></div>
+  <!-- Bulk Status -->
+  <div id="bulk-status" class="bulk-panel" style="display:none"></div>
+
+  <!-- Single Actions -->
+  <div class="actions single-panel" id="single-actions">
+    <button class="btn btn-primary" id="resize-btn" disabled onclick="resizeImage()">
+      ⚡ Resize &amp; Download
+    </button>
+    <button class="btn btn-secondary" onclick="copyToClipboard()" id="copy-btn" style="display:none">📋 Copy</button>
+  </div>
+
+  <!-- Bulk Actions -->
+  <div class="actions bulk-panel" id="bulk-actions" style="display:none">
+    <button class="btn btn-primary" id="bulk-resize-btn" disabled onclick="resizeBulk()">
+      ⚡ Resize All &amp; Download ZIP
+    </button>
+    <button class="btn btn-secondary" id="bulk-add-btn" onclick="document.getElementById('bulk-file-input').click()">+ Add More</button>
+  </div>
+
+  <!-- Single Result -->
+  <div id="result-section" class="card single-panel">
+    <div class="card-title">Result</div>
+    <div class="result-compare">
+      <div class="result-img-wrap">
+        <img id="orig-thumb" alt="Original" />
+        <div class="result-img-label">Original <span id="orig-label">—</span></div>
+      </div>
+      <div class="result-img-wrap">
+        <img id="result-thumb" alt="Resized" />
+        <div class="result-img-label">Resized <span id="result-label">—</span></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── State ─────────────────────────────────────────────────────────────────────
+  let mode = 'single';
+  let originalFile = null;
+  let originalWidth = 0, originalHeight = 0;
+  let aspectRatio = 1;
+  let lockAspect = true;
+  let lastResizedBlob = null;
+  let updatingDims = false;
+  let bulkFiles = [];   // { file, id, thumbUrl }
+  let bulkIdCounter = 0;
+
+  // ── DOM refs ──────────────────────────────────────────────────────────────────
+  const dropZone     = document.getElementById('drop-zone');
+  const fileInput    = document.getElementById('file-input');
+  const previewImg   = document.getElementById('preview-img');
+  const infoBar      = document.getElementById('info-bar');
+  const resizeBtn    = document.getElementById('resize-btn');
+  const copyBtn      = document.getElementById('copy-btn');
+  const wInput       = document.getElementById('out-width');
+  const hInput       = document.getElementById('out-height');
+  const scaleRange   = document.getElementById('scale-range');
+  const scaleVal     = document.getElementById('scale-val');
+  const qualityRange = document.getElementById('quality-range');
+  const qualityVal   = document.getElementById('quality-val');
+  const lockBtn      = document.getElementById('lock-btn');
+  const statusEl     = document.getElementById('status');
+  const resultSection= document.getElementById('result-section');
+  const fitMode      = document.getElementById('fit-mode');
+  const outFormat    = document.getElementById('out-format');
+  const outFilename  = document.getElementById('out-filename');
+  const fnExt        = document.getElementById('fn-ext');
+  const filenameBar  = document.getElementById('filename-bar');
+
+  const bulkDropZone  = document.getElementById('bulk-drop-zone');
+  const bulkFileInput = document.getElementById('bulk-file-input');
+  const bulkQueueSec  = document.getElementById('bulk-queue-section');
+  const queueGrid     = document.getElementById('queue-grid');
+  const queueCount    = document.getElementById('queue-count');
+  const bulkProgress  = document.getElementById('bulk-progress');
+  const bulkResizeBtn = document.getElementById('bulk-resize-btn');
+  const bulkStatusEl  = document.getElementById('bulk-status');
+
+  // ── Mode Switching ─────────────────────────────────────────────────────────────
+  function setMode(m) {
+    mode = m;
+    document.getElementById('tab-single').classList.toggle('active', m === 'single');
+    document.getElementById('tab-bulk').classList.toggle('active', m === 'bulk');
+
+    const singleEls = document.querySelectorAll('.single-panel');
+    const bulkEls   = document.querySelectorAll('.bulk-panel');
+    singleEls.forEach(el => el.style.display = m === 'single' ? '' : 'none');
+    bulkEls.forEach(el => {
+      // only show bulk elements that should be visible based on state
+      el.style.display = m === 'bulk' ? (el.dataset.bulkVisible !== 'false' ? '' : 'none') : 'none';
+    });
+
+    if (m === 'bulk') {
+      // restore correct visibility for bulk sub-elements
+      bulkDropZone.style.display = '';
+      document.getElementById('bulk-actions').style.display = '';
+      bulkStatusEl.style.display = 'none'; // reset
+      if (bulkFiles.length > 0) {
+        bulkQueueSec.style.display = '';
+        bulkQueueSec.classList.add('visible');
+      }
+    }
+  }
+
+  // ── Single: Drag & Drop ───────────────────────────────────────────────────────
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) loadImage(file);
+    else showStatus('Please drop a valid image file.', 'error');
+  });
+  dropZone.addEventListener('click', e => {
+    if (!e.target.classList.contains('overlay-btn')) fileInput.click();
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadImage(fileInput.files[0]); });
+
+  function loadImage(file) {
+    originalFile = file;
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      originalWidth  = img.naturalWidth;
+      originalHeight = img.naturalHeight;
+      aspectRatio = originalWidth / originalHeight;
+      previewImg.src = url;
+      dropZone.classList.add('has-image');
+      wInput.value = originalWidth; hInput.value = originalHeight;
+      scaleRange.value = 100; scaleVal.textContent = '100%';
+      document.getElementById('info-name').textContent = truncate(file.name, 24);
+      document.getElementById('info-dims').textContent = `${originalWidth} × ${originalHeight}`;
+      document.getElementById('info-size').textContent = formatBytes(file.size);
+      document.getElementById('info-type').textContent = file.type.split('/')[1].toUpperCase();
+      infoBar.classList.add('visible');
+      filenameBar.classList.add('visible');
+      updateOutputFilename();
+      resizeBtn.disabled = false;
+      hideStatus(); resultSection.classList.remove('visible'); copyBtn.style.display = 'none';
+    };
+    img.src = url;
+  }
+
+  function clearImage() {
+    originalFile = null; previewImg.src = '';
+    dropZone.classList.remove('has-image');
+    infoBar.classList.remove('visible'); filenameBar.classList.remove('visible');
+    resultSection.classList.remove('visible');
+    resizeBtn.disabled = true; wInput.value = ''; hInput.value = '';
+    scaleRange.value = 100; scaleVal.textContent = '100%';
+    hideStatus(); fileInput.value = ''; copyBtn.style.display = 'none';
+  }
+
+  // ── Bulk: Drag & Drop ─────────────────────────────────────────────────────────
+  bulkDropZone.addEventListener('dragover', e => { e.preventDefault(); bulkDropZone.classList.add('drag-over'); });
+  bulkDropZone.addEventListener('dragleave', () => bulkDropZone.classList.remove('drag-over'));
+  bulkDropZone.addEventListener('drop', e => {
+    e.preventDefault(); bulkDropZone.classList.remove('drag-over');
+    const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
+    if (files.length) addBulkFiles(files);
+    else showBulkStatus('No valid image files found.', 'error');
+  });
+  bulkDropZone.addEventListener('click', () => bulkFileInput.click());
+  bulkFileInput.addEventListener('change', () => {
+    if (bulkFileInput.files.length) addBulkFiles([...bulkFileInput.files]);
+    bulkFileInput.value = '';
+  });
+
+  function addBulkFiles(files) {
+    files.forEach(file => {
+      const id = ++bulkIdCounter;
+      const thumbUrl = URL.createObjectURL(file);
+      const customName = file.name.replace(/\.[^.]+$/, '');
+      bulkFiles.push({ file, id, thumbUrl, customName });
+      appendQueueItem({ file, id, thumbUrl, customName });
+    });
+    updateQueueCount();
+    bulkQueueSec.style.display = '';
+    bulkQueueSec.classList.add('visible');
+    bulkResizeBtn.disabled = false;
+    hideBulkStatus();
+  }
+
+  function appendQueueItem({ file, id, thumbUrl, customName }) {
+    const item = document.createElement('div');
+    item.className = 'queue-item';
+    item.id = `qi-${id}`;
+    item.innerHTML = `
+      <img src="${thumbUrl}" alt="${file.name}" />
+      <button class="queue-item-remove" onclick="removeQueueItem(${id})" title="Remove">✕</button>
+      <span class="queue-item-status pending" id="qis-${id}">pending</span>
+      <div class="queue-item-info">
+        <input class="queue-item-name" value="${customName}" title="Click to rename" data-id="${id}" />
+        <div class="queue-item-meta">${formatBytes(file.size)}</div>
+      </div>`;
+    queueGrid.appendChild(item);
+    item.querySelector('.queue-item-name').addEventListener('change', (e) => {
+      const bf = bulkFiles.find(f => f.id === id);
+      if (bf) bf.customName = e.target.value;
+    });
+  }
+
+  function removeQueueItem(id) {
+    bulkFiles = bulkFiles.filter(f => f.id !== id);
+    const el = document.getElementById(`qi-${id}`);
+    if (el) el.remove();
+    updateQueueCount();
+    if (bulkFiles.length === 0) {
+      bulkQueueSec.style.display = 'none';
+      bulkResizeBtn.disabled = true;
+    }
+  }
+
+  function clearBulkQueue() {
+    bulkFiles = [];
+    queueGrid.innerHTML = '';
+    bulkQueueSec.style.display = 'none';
+    bulkResizeBtn.disabled = true;
+    bulkProgress.style.display = 'none';
+    hideBulkStatus();
+  }
+
+  function updateQueueCount() {
+    queueCount.textContent = `${bulkFiles.length} image${bulkFiles.length !== 1 ? 's' : ''}`;
+  }
+
+  // ── Shared: Dimension Sync ────────────────────────────────────────────────────
+  wInput.addEventListener('input', () => {
+    if (updatingDims || !lockAspect || mode !== 'single') return;
+    const w = parseInt(wInput.value);
+    if (w > 0) { updatingDims = true; hInput.value = Math.round(w / aspectRatio); updatingDims = false; }
+    syncScale();
+    updateOutputFilename();
+  });
+  hInput.addEventListener('input', () => {
+    if (updatingDims || !lockAspect || mode !== 'single') return;
+    const h = parseInt(hInput.value);
+    if (h > 0) { updatingDims = true; wInput.value = Math.round(h * aspectRatio); updatingDims = false; }
+    syncScale();
+    updateOutputFilename();
+  });
+  scaleRange.addEventListener('input', () => {
+    const pct = parseInt(scaleRange.value);
+    scaleVal.textContent = pct + '%';
+    if (mode === 'single' && originalWidth && originalHeight) {
+      updatingDims = true;
+      wInput.value = Math.round(originalWidth * pct / 100);
+      hInput.value = Math.round(originalHeight * pct / 100);
+      updatingDims = false;
+    }
+    updateOutputFilename();
+  });
+  function syncScale() {
+    if (originalWidth) {
+      const w = parseInt(wInput.value);
+      if (w > 0) { const pct = Math.round(w / originalWidth * 100); scaleRange.value = Math.min(200, pct); scaleVal.textContent = pct + '%'; }
+    }
+  }
+  qualityRange.addEventListener('input', () => { qualityVal.textContent = qualityRange.value + '%'; });
+  outFormat.addEventListener('change', () => {
+    document.getElementById('quality-label').style.opacity = outFormat.value === 'image/png' ? '0.4' : '1';
+    updateOutputFilename();
+  });
+
+  function updateOutputFilename() {
+    if (!originalFile) return;
+    const baseName = originalFile.name.replace(/\.[^.]+$/, '');
+    const w = parseInt(wInput.value) || '';
+    const h = parseInt(hInput.value) || '';
+    if (w && h && (w !== originalWidth || h !== originalHeight)) {
+      outFilename.value = `${baseName}-${w}x${h}`;
+    } else {
+      outFilename.value = baseName;
+    }
+    const fmt = outFormat.value === 'same' ? originalFile.type : outFormat.value;
+    const ext = (fmt || 'image/jpeg').split('/')[1].replace('jpeg', 'jpg');
+    fnExt.textContent = '.' + ext;
+  }
+  function toggleLock() {
+    lockAspect = !lockAspect;
+    lockBtn.classList.toggle('locked', lockAspect);
+    lockBtn.textContent = lockAspect ? '🔒' : '🔓';
+  }
+
+  // ── Single: Resize ────────────────────────────────────────────────────────────
+  async function resizeImage() {
+    if (!originalFile) return;
+    const targetW = parseInt(wInput.value) || originalWidth;
+    const targetH = parseInt(hInput.value) || originalHeight;
+    const quality = parseInt(qualityRange.value) / 100;
+    const fit     = fitMode.value;
+    const fmt     = outFormat.value === 'same' ? originalFile.type : outFormat.value;
+
+    resizeBtn.disabled = true; resizeBtn.textContent = '⏳ Processing…';
+    try {
+      const img = await loadImg(URL.createObjectURL(originalFile));
+      const { canvas } = computeCanvas(img, targetW, targetH, fit);
+      const mimeType = fmt || 'image/jpeg';
+      const blob = await canvasToBlob(canvas, mimeType, quality);
+      lastResizedBlob = blob;
+
+      const ext = mimeType.split('/')[1].replace('jpeg','jpg');
+      const outName = `${outFilename.value || originalFile.name.replace(/\.[^.]+$/,'')}.${ext}`;
+      triggerDownload(URL.createObjectURL(blob), outName);
+
+      document.getElementById('orig-thumb').src = URL.createObjectURL(originalFile);
+      document.getElementById('result-thumb').src = URL.createObjectURL(blob);
+      document.getElementById('orig-label').textContent = `${img.width}×${img.height} · ${formatBytes(originalFile.size)}`;
+      document.getElementById('result-label').textContent = `${canvas.width}×${canvas.height} · ${formatBytes(blob.size)}`;
+      resultSection.classList.add('visible');
+      copyBtn.style.display = 'flex';
+      showStatus(`✅ Saved as "${outName}" (${formatBytes(blob.size)})`, 'success');
+    } catch (err) { showStatus('❌ Error: ' + err.message, 'error'); }
+    resizeBtn.disabled = false; resizeBtn.innerHTML = '⚡ Resize &amp; Download';
+  }
+
+  // ── Bulk: Resize All ──────────────────────────────────────────────────────────
+  async function resizeBulk() {
+    if (!bulkFiles.length) return;
+    const targetW = parseInt(wInput.value) || null;
+    const targetH = parseInt(hInput.value) || null;
+    const scalePct = parseInt(scaleRange.value) / 100;
+    const quality  = parseInt(qualityRange.value) / 100;
+    const fit      = fitMode.value;
+    const fmtPref  = outFormat.value;
+
+    if (!targetW && !targetH && scalePct === 1) {
+      showBulkStatus('⚠️ Set a width, height, or scale before resizing.', 'error'); return;
+    }
+
+    bulkResizeBtn.disabled = true;
+    bulkResizeBtn.textContent = '⏳ Processing…';
+    bulkProgress.style.display = '';
+    hideBulkStatus();
+
+    const zip = typeof JSZip !== 'undefined' ? new JSZip() : null;
+    let done = 0; let errors = 0;
+    const total = bulkFiles.length;
+
+    for (const { file, id, customName } of bulkFiles) {
+      setQueueItemStatus(id, 'processing');
+      try {
+        const img = await loadImg(URL.createObjectURL(file));
+        const w = targetW || (targetH ? Math.round(targetH * (img.width / img.height)) : Math.round(img.width * scalePct));
+        const h = targetH || (targetW ? Math.round(targetW * (img.height / img.width)) : Math.round(img.height * scalePct));
+
+        const { canvas } = computeCanvas(img, w, h, fit);
+        const fmt = fmtPref === 'same' ? file.type : fmtPref;
+        const mimeType = fmt || 'image/jpeg';
+        const blob = await canvasToBlob(canvas, mimeType, quality);
+
+        const ext = mimeType.split('/')[1].replace('jpeg','jpg');
+        const baseName = customName || file.name.replace(/\.[^.]+$/, '');
+        const dimSuffix = (w !== img.width || h !== img.height) ? `-${canvas.width}x${canvas.height}` : '';
+        const outName = `${baseName}${dimSuffix}.${ext}`;
+
+        if (zip) {
+          const ab = await blob.arrayBuffer();
+          zip.file(outName, ab);
+        } else {
+          triggerDownload(URL.createObjectURL(blob), outName);
+          await sleep(150);
+        }
+        setQueueItemStatus(id, 'done');
+      } catch {
+        setQueueItemStatus(id, 'error'); errors++;
+      }
+      done++;
+      updateProgress(done, total);
+    }
+
+    if (zip) {
+      try {
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+        triggerDownload(URL.createObjectURL(zipBlob), 'resized-images.zip');
+        const msg = errors
+          ? `✅ ZIP downloaded. ${total - errors}/${total} succeeded, ${errors} failed.`
+          : `✅ All ${total} images resized and downloaded as ZIP!`;
+        showBulkStatus(msg, 'success');
+      } catch (e) { showBulkStatus('❌ Failed to create ZIP: ' + e.message, 'error'); }
+    } else {
+      showBulkStatus(`✅ ${total - errors} files downloaded individually.`, 'success');
+    }
+
+    bulkResizeBtn.disabled = false;
+    bulkResizeBtn.innerHTML = '⚡ Resize All &amp; Download ZIP';
+  }
+
+  function setQueueItemStatus(id, status) {
+    const el = document.getElementById(`qi-${id}`);
+    const badge = document.getElementById(`qis-${id}`);
+    if (!el || !badge) return;
+    el.className = `queue-item ${status}`;
+    badge.className = `queue-item-status ${status}`;
+    const labels = { pending: 'pending', processing: '⏳', done: '✅', error: '❌' };
+    badge.textContent = labels[status] || status;
+  }
+
+  function updateProgress(done, total) {
+    const pct = Math.round(done / total * 100);
+    document.getElementById('progress-fill').style.width = pct + '%';
+    document.getElementById('progress-text').textContent = `Processing ${done} of ${total}…`;
+    document.getElementById('progress-pct').textContent = pct + '%';
+  }
+
+  // ── Canvas Helper ─────────────────────────────────────────────────────────────
+  function computeCanvas(img, targetW, targetH, fit) {
+    let canvasW = targetW, canvasH = targetH;
+    let drawX = 0, drawY = 0, drawW = targetW, drawH = targetH;
+    const srcRatio = img.width / img.height;
+    const dstRatio = targetW / targetH;
+
+    if (fit === 'inside') {
+      if (srcRatio > dstRatio) { canvasW = targetW; canvasH = Math.round(targetW / srcRatio); }
+      else { canvasH = targetH; canvasW = Math.round(targetH * srcRatio); }
+      drawW = canvasW; drawH = canvasH;
+    } else if (fit === 'cover') {
+      canvasW = targetW; canvasH = targetH;
+      if (srcRatio > dstRatio) { drawH = targetH; drawW = Math.round(targetH * srcRatio); drawX = Math.round((targetW - drawW) / 2); }
+      else { drawW = targetW; drawH = Math.round(targetW / srcRatio); drawY = Math.round((targetH - drawH) / 2); }
+    } else if (fit === 'contain') {
+      canvasW = targetW; canvasH = targetH;
+      if (srcRatio > dstRatio) { drawW = targetW; drawH = Math.round(targetW / srcRatio); drawY = Math.round((targetH - drawH) / 2); }
+      else { drawH = targetH; drawW = Math.round(targetH * srcRatio); drawX = Math.round((targetW - drawW) / 2); }
+    } else {
+      canvasW = targetW; canvasH = targetH; drawW = targetW; drawH = targetH;
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasW; canvas.height = canvasH;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, canvasW, canvasH);
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    return { canvas, canvasW, canvasH };
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────────
+  async function copyToClipboard() {
+    if (!lastResizedBlob) return;
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ [lastResizedBlob.type]: lastResizedBlob })]);
+      showStatus('📋 Copied to clipboard!', 'success');
+    } catch { showStatus('Copy not supported in this browser.', 'error'); }
+  }
+
+  function loadImg(src) {
+    return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+  }
+  function canvasToBlob(canvas, type, quality) {
+    return new Promise(res => canvas.toBlob(res, type, quality));
+  }
+  function triggerDownload(url, name) {
+    const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  }
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+    return (b/1048576).toFixed(2) + ' MB';
+  }
+  function truncate(str, n) { return str.length > n ? str.slice(0, n) + '…' : str; }
+  function showStatus(msg, type) { statusEl.textContent = msg; statusEl.className = type; }
+  function hideStatus() { statusEl.className = ''; }
+  function showBulkStatus(msg, type) { bulkStatusEl.textContent = msg; bulkStatusEl.className = type; bulkStatusEl.style.display = 'flex'; }
+  function hideBulkStatus() { bulkStatusEl.className = ''; bulkStatusEl.style.display = 'none'; }
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "image-resizer",
+  "version": "1.0.0",
+  "description": "CLI tool to resize images",
+  "main": "resize.js",
+  "bin": {
+    "resize": "./resize.js"
+  },
+  "scripts": {
+    "start": "node resize.js"
+  },
+  "dependencies": {
+    "sharp": "^0.33.5"
+  }
+}
