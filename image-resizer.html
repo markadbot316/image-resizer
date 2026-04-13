@@ -457,6 +457,13 @@
   <div class="card">
     <div class="card-title">Dimensions</div>
     <div class="settings-grid">
+      <label>
+        Preset
+        <select id="dimension-preset">
+          <option value="custom">Custom</option>
+          <option value="shopify-2048">Shopify Product (2048 x 2048)</option>
+        </select>
+      </label>
       <div class="input-row">
         <label>Width (px)<input type="number" id="out-width" placeholder="auto" min="1" max="8000" /></label>
         <button class="lock-btn locked" id="lock-btn" title="Lock aspect ratio" onclick="toggleLock()">🔒</button>
@@ -589,6 +596,7 @@
   const infoBar      = document.getElementById('info-bar');
   const resizeBtn    = document.getElementById('resize-btn');
   const copyBtn      = document.getElementById('copy-btn');
+  const dimensionPreset = document.getElementById('dimension-preset');
   const wInput       = document.getElementById('out-width');
   const hInput       = document.getElementById('out-height');
   const scaleRange   = document.getElementById('scale-range');
@@ -616,6 +624,11 @@
   const bulkProgress  = document.getElementById('bulk-progress');
   const bulkResizeBtn = document.getElementById('bulk-resize-btn');
   const bulkStatusEl  = document.getElementById('bulk-status');
+  const DIMENSION_PRESETS = {
+    custom: null,
+    'shopify-2048': { width: 2048, height: 2048 },
+  };
+  let applyingPreset = false;
 
   // ── Mode Switching ─────────────────────────────────────────────────────────────
   function setMode(m) {
@@ -667,8 +680,9 @@
       aspectRatio = originalWidth / originalHeight;
       previewImg.src = url;
       dropZone.classList.add('has-image');
-      wInput.value = originalWidth; hInput.value = originalHeight;
       scaleRange.value = 100; scaleVal.textContent = '100%';
+      if (dimensionPreset.value !== 'custom') applyDimensionPreset(dimensionPreset.value);
+      else { wInput.value = originalWidth; hInput.value = originalHeight; }
       document.getElementById('info-name').textContent = truncate(file.name, 24);
       document.getElementById('info-dims').textContent = `${originalWidth} × ${originalHeight}`;
       document.getElementById('info-size').textContent = formatBytes(file.size);
@@ -684,10 +698,13 @@
 
   function clearImage() {
     originalFile = null; previewImg.src = '';
+    originalWidth = 0; originalHeight = 0; aspectRatio = 1;
     dropZone.classList.remove('has-image');
     infoBar.classList.remove('visible'); filenameBar.classList.remove('visible');
     resultSection.classList.remove('visible');
-    resizeBtn.disabled = true; wInput.value = ''; hInput.value = '';
+    resizeBtn.disabled = true;
+    if (dimensionPreset.value !== 'custom') applyDimensionPreset(dimensionPreset.value);
+    else { wInput.value = ''; hInput.value = ''; }
     scaleRange.value = 100; scaleVal.textContent = '100%';
     hideStatus(); fileInput.value = ''; copyBtn.style.display = 'none';
   }
@@ -767,18 +784,22 @@
 
   // ── Shared: Dimension Sync ────────────────────────────────────────────────────
   wInput.addEventListener('input', () => {
-    if (updatingDims || !lockAspect || mode !== 'single') return;
-    const w = parseInt(wInput.value);
-    if (w > 0) { updatingDims = true; hInput.value = Math.round(w / aspectRatio); updatingDims = false; }
+    if (!updatingDims && lockAspect && mode === 'single') {
+      const w = parseInt(wInput.value);
+      if (w > 0) { updatingDims = true; hInput.value = Math.round(w / aspectRatio); updatingDims = false; }
+    }
     syncScale();
     updateOutputFilename();
+    syncPresetSelectionFromInputs();
   });
   hInput.addEventListener('input', () => {
-    if (updatingDims || !lockAspect || mode !== 'single') return;
-    const h = parseInt(hInput.value);
-    if (h > 0) { updatingDims = true; wInput.value = Math.round(h * aspectRatio); updatingDims = false; }
+    if (!updatingDims && lockAspect && mode === 'single') {
+      const h = parseInt(hInput.value);
+      if (h > 0) { updatingDims = true; wInput.value = Math.round(h * aspectRatio); updatingDims = false; }
+    }
     syncScale();
     updateOutputFilename();
+    syncPresetSelectionFromInputs();
   });
   scaleRange.addEventListener('input', () => {
     const pct = parseInt(scaleRange.value);
@@ -790,6 +811,7 @@
       updatingDims = false;
     }
     updateOutputFilename();
+    syncPresetSelectionFromInputs();
   });
   function syncScale() {
     if (originalWidth) {
@@ -797,10 +819,30 @@
       if (w > 0) { const pct = Math.round(w / originalWidth * 100); scaleRange.value = Math.min(200, pct); scaleVal.textContent = pct + '%'; }
     }
   }
+  function applyDimensionPreset(presetKey) {
+    const preset = DIMENSION_PRESETS[presetKey];
+    if (!preset) return;
+    applyingPreset = true;
+    wInput.value = preset.width;
+    hInput.value = preset.height;
+    applyingPreset = false;
+    syncScale();
+    updateOutputFilename();
+  }
+  function syncPresetSelectionFromInputs() {
+    if (applyingPreset) return;
+    const w = parseInt(wInput.value, 10);
+    const h = parseInt(hInput.value, 10);
+    if (w === 2048 && h === 2048) dimensionPreset.value = 'shopify-2048';
+    else dimensionPreset.value = 'custom';
+  }
   qualityRange.addEventListener('input', () => { qualityVal.textContent = qualityRange.value + '%'; });
   bgSensitivity.addEventListener('input', () => { bgSensitivityVal.textContent = bgSensitivity.value; });
   bgRemoveToggle.addEventListener('change', () => {
     bgSensitivityLabel.style.opacity = bgRemoveToggle.checked ? '1' : '0.45';
+  });
+  dimensionPreset.addEventListener('change', () => {
+    applyDimensionPreset(dimensionPreset.value);
   });
   outFormat.addEventListener('change', () => {
     document.getElementById('quality-label').style.opacity = outFormat.value === 'image/png' ? '0.4' : '1';
