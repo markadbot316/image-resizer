@@ -286,6 +286,35 @@
     }
     .lock-btn.locked { border-color: var(--accent); color: var(--accent); background: rgba(124,111,247,0.1); }
     .range-row { display: flex; align-items: center; gap: 12px; }
+    .stack-row { display: grid; gap: 10px; }
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 14px;
+    }
+    .toggle-copy { display: grid; gap: 4px; }
+    .toggle-copy strong { font-size: 14px; color: var(--text); font-weight: 600; }
+    .toggle-copy span { font-size: 12px; color: var(--muted); line-height: 1.4; }
+    .switch {
+      position: relative; display: inline-flex; width: 48px; height: 28px; flex-shrink: 0;
+    }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch-slider {
+      position: absolute; inset: 0; border-radius: 999px; cursor: pointer;
+      background: var(--border); transition: background 0.15s;
+    }
+    .switch-slider::before {
+      content: ''; position: absolute; top: 3px; left: 3px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #fff; transition: transform 0.15s;
+    }
+    .switch input:checked + .switch-slider { background: var(--accent); }
+    .switch input:checked + .switch-slider::before { transform: translateX(20px); }
+    .helper-note {
+      font-size: 12px; color: var(--muted); line-height: 1.5;
+      background: rgba(124,111,247,0.06); border: 1px solid rgba(124,111,247,0.2);
+      border-radius: 10px; padding: 10px 12px;
+    }
     input[type="range"] {
       flex: 1; -webkit-appearance: none; height: 4px;
       border-radius: 2px; background: var(--border); outline: none;
@@ -475,6 +504,34 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-title">Background</div>
+    <div class="settings-grid">
+      <div class="stack-row">
+        <div class="toggle-row">
+          <div class="toggle-copy">
+            <strong>Background to white</strong>
+            <span>Best for product shots on plain backdrops. Removes edge-matching background and fills with white.</span>
+          </div>
+          <label class="switch" aria-label="Background to white">
+            <input type="checkbox" id="bg-remove-toggle" />
+            <span class="switch-slider"></span>
+          </label>
+        </div>
+        <label id="bg-sensitivity-label">
+          Cleanup Sensitivity
+          <div class="range-row">
+            <input type="range" id="bg-sensitivity" min="8" max="80" value="28" />
+            <span class="range-val" id="bg-sensitivity-val">28</span>
+          </div>
+        </label>
+        <div class="helper-note">
+          Works best when background touches image edges and is fairly consistent in color.
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Single Status -->
   <div id="status" class="single-panel"></div>
   <!-- Bulk Status -->
@@ -538,6 +595,10 @@
   const scaleVal     = document.getElementById('scale-val');
   const qualityRange = document.getElementById('quality-range');
   const qualityVal   = document.getElementById('quality-val');
+  const bgRemoveToggle = document.getElementById('bg-remove-toggle');
+  const bgSensitivity = document.getElementById('bg-sensitivity');
+  const bgSensitivityVal = document.getElementById('bg-sensitivity-val');
+  const bgSensitivityLabel = document.getElementById('bg-sensitivity-label');
   const lockBtn      = document.getElementById('lock-btn');
   const statusEl     = document.getElementById('status');
   const resultSection= document.getElementById('result-section');
@@ -737,10 +798,15 @@
     }
   }
   qualityRange.addEventListener('input', () => { qualityVal.textContent = qualityRange.value + '%'; });
+  bgSensitivity.addEventListener('input', () => { bgSensitivityVal.textContent = bgSensitivity.value; });
+  bgRemoveToggle.addEventListener('change', () => {
+    bgSensitivityLabel.style.opacity = bgRemoveToggle.checked ? '1' : '0.45';
+  });
   outFormat.addEventListener('change', () => {
     document.getElementById('quality-label').style.opacity = outFormat.value === 'image/png' ? '0.4' : '1';
     updateOutputFilename();
   });
+  bgSensitivityLabel.style.opacity = '0.45';
 
   function updateOutputFilename() {
     if (!originalFile) return;
@@ -774,7 +840,8 @@
     resizeBtn.disabled = true; resizeBtn.textContent = '⏳ Processing…';
     try {
       const img = await loadImg(URL.createObjectURL(originalFile));
-      const { canvas } = computeCanvas(img, targetW, targetH, fit);
+      const source = buildSourceImage(img);
+      const { canvas } = computeCanvas(source, targetW, targetH, fit);
       const mimeType = fmt || 'image/jpeg';
       const blob = await canvasToBlob(canvas, mimeType, quality);
       lastResizedBlob = blob;
@@ -804,7 +871,7 @@
     const fit      = fitMode.value;
     const fmtPref  = outFormat.value;
 
-    if (!targetW && !targetH && scalePct === 1) {
+    if (!targetW && !targetH && scalePct === 1 && !bgRemoveToggle.checked) {
       showBulkStatus('⚠️ Set a width, height, or scale before resizing.', 'error'); return;
     }
 
@@ -824,7 +891,8 @@
         const w = targetW || (targetH ? Math.round(targetH * (img.width / img.height)) : Math.round(img.width * scalePct));
         const h = targetH || (targetW ? Math.round(targetW * (img.height / img.width)) : Math.round(img.height * scalePct));
 
-        const { canvas } = computeCanvas(img, w, h, fit);
+        const source = buildSourceImage(img);
+        const { canvas } = computeCanvas(source, w, h, fit);
         const fmt = fmtPref === 'same' ? file.type : fmtPref;
         const mimeType = fmt || 'image/jpeg';
         const blob = await canvasToBlob(canvas, mimeType, quality);
@@ -885,9 +953,10 @@
 
   // ── Canvas Helper ─────────────────────────────────────────────────────────────
   function computeCanvas(img, targetW, targetH, fit) {
+    const { width: sourceW, height: sourceH } = getSourceDimensions(img);
     let canvasW = targetW, canvasH = targetH;
     let drawX = 0, drawY = 0, drawW = targetW, drawH = targetH;
-    const srcRatio = img.width / img.height;
+    const srcRatio = sourceW / sourceH;
     const dstRatio = targetW / targetH;
 
     if (fit === 'inside') {
@@ -915,6 +984,168 @@
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
+  function buildSourceImage(img) {
+    if (!bgRemoveToggle.checked) return img;
+    return flattenBackgroundToWhite(img, parseInt(bgSensitivity.value, 10));
+  }
+
+  function getSourceDimensions(source) {
+    return {
+      width: source.naturalWidth || source.videoWidth || source.width,
+      height: source.naturalHeight || source.videoHeight || source.height,
+    };
+  }
+
+  function flattenBackgroundToWhite(img, threshold) {
+    const width = img.naturalWidth || img.width;
+    const height = img.naturalHeight || img.height;
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = width;
+    sourceCanvas.height = height;
+    const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: true });
+    sourceCtx.drawImage(img, 0, 0, width, height);
+
+    const imageData = sourceCtx.getImageData(0, 0, width, height);
+    const data = imageData.data;
+    const visited = new Uint8Array(width * height);
+    const queue = new Uint32Array(width * height);
+    let head = 0;
+    let tail = 0;
+
+    const backgroundColor = sampleEdgeBackground(data, width, height);
+    const limit = Math.max(8, threshold);
+
+    for (let x = 0; x < width; x++) {
+      enqueuePixel(x, 0);
+      enqueuePixel(x, height - 1);
+    }
+    for (let y = 1; y < height - 1; y++) {
+      enqueuePixel(0, y);
+      enqueuePixel(width - 1, y);
+    }
+
+    while (head < tail) {
+      const idx = queue[head++];
+      const x = idx % width;
+      const y = (idx - x) / width;
+
+      if (x > 0) enqueuePixel(x - 1, y);
+      if (x + 1 < width) enqueuePixel(x + 1, y);
+      if (y > 0) enqueuePixel(x, y - 1);
+      if (y + 1 < height) enqueuePixel(x, y + 1);
+    }
+
+    for (let i = 0; i < visited.length; i++) {
+      if (!visited[i]) continue;
+      data[i * 4 + 3] = 0;
+    }
+
+    featherMask(data, visited, width, height);
+
+    const outputCanvas = document.createElement('canvas');
+    outputCanvas.width = width;
+    outputCanvas.height = height;
+    const outputCtx = outputCanvas.getContext('2d');
+    outputCtx.fillStyle = '#ffffff';
+    outputCtx.fillRect(0, 0, width, height);
+    sourceCtx.putImageData(imageData, 0, 0);
+    outputCtx.drawImage(sourceCanvas, 0, 0);
+    return outputCanvas;
+
+    function enqueuePixel(x, y) {
+      const idx = y * width + x;
+      if (visited[idx]) return;
+
+      const offset = idx * 4;
+      const alpha = data[offset + 3];
+      if (alpha === 0) {
+        visited[idx] = 1;
+        queue[tail++] = idx;
+        return;
+      }
+
+      const distance = colorDistance(
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        backgroundColor.r,
+        backgroundColor.g,
+        backgroundColor.b
+      );
+
+      if (distance <= limit) {
+        visited[idx] = 1;
+        queue[tail++] = idx;
+      }
+    }
+  }
+
+  function sampleEdgeBackground(data, width, height) {
+    const points = [];
+    const inset = Math.max(1, Math.floor(Math.min(width, height) * 0.04));
+    const radius = Math.max(1, Math.floor(Math.min(width, height) * 0.015));
+    const corners = [
+      [inset, inset],
+      [width - 1 - inset, inset],
+      [inset, height - 1 - inset],
+      [width - 1 - inset, height - 1 - inset],
+    ];
+
+    corners.forEach(([cx, cy]) => {
+      for (let y = Math.max(0, cy - radius); y <= Math.min(height - 1, cy + radius); y++) {
+        for (let x = Math.max(0, cx - radius); x <= Math.min(width - 1, cx + radius); x++) {
+          const offset = (y * width + x) * 4;
+          if (data[offset + 3] === 0) continue;
+          points.push([data[offset], data[offset + 1], data[offset + 2]]);
+        }
+      }
+    });
+
+    if (!points.length) return { r: 255, g: 255, b: 255 };
+
+    const totals = points.reduce((acc, [r, g, b]) => {
+      acc.r += r;
+      acc.g += g;
+      acc.b += b;
+      return acc;
+    }, { r: 0, g: 0, b: 0 });
+
+    return {
+      r: Math.round(totals.r / points.length),
+      g: Math.round(totals.g / points.length),
+      b: Math.round(totals.b / points.length),
+    };
+  }
+
+  function featherMask(data, visited, width, height) {
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const idx = y * width + x;
+        if (visited[idx]) continue;
+
+        let bgNeighbors = 0;
+        const neighbors = [idx - 1, idx + 1, idx - width, idx + width];
+        for (const n of neighbors) {
+          if (visited[n]) bgNeighbors++;
+        }
+        if (!bgNeighbors) continue;
+
+        const offset = idx * 4;
+        const alpha = data[offset + 3];
+        if (alpha === 0) continue;
+        data[offset + 3] = Math.max(0, alpha - bgNeighbors * 36);
+      }
+    }
+  }
+
+  function colorDistance(r1, g1, b1, r2, g2, b2) {
+    return Math.sqrt(
+      ((r1 - r2) * (r1 - r2)) +
+      ((g1 - g2) * (g1 - g2)) +
+      ((b1 - b2) * (b1 - b2))
+    );
+  }
+
   async function copyToClipboard() {
     if (!lastResizedBlob) return;
     try {
